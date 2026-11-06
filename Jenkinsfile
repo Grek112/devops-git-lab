@@ -6,50 +6,86 @@ pipeline {
         skipDefaultCheckout(true)
     }
 
-    environment {
-        SERVER_REGION = 'eu-west-1'
-        BUILD_ENV = 'development'
+    parameters {
+        booleanParam(
+            name: 'RUN_HEALTH_CHECK',
+            defaultValue: true,
+            description: 'Run health check tests'
+        )
     }
 
     stages {
         stage('Checkout') {
             steps {
                 checkout scm
-                echo 'Checked out bootcamp scripts from Git'
+                echo "Branch: ${env.BRANCH_NAME}"
             }
         }
 
-        stage('Script Validation') {
+        stage('Validate Scripts') {
             steps {
-                echo 'Validating scripts...'
+                sh 'bash -n health-check.sh'
+            }
+        }
+
+        stage('Parallel Tests') {
+            when {
+                expression { params.RUN_HEALTH_CHECK }
+            }
+            parallel {
+                stage('Syntax Tests') {
+                    steps {
+                        sh 'bash -n health-check.sh'
+                    }
+                }
+
+                stage('Functionality Tests') {
+                    steps {
+                        sh 'bash health-check.sh'
+                    }
+                }
+            }
+        }
+
+        stage('Deploy to Development') {
+            when {
+                branch 'ec2-development'
+            }
+            steps {
                 sh '''
                     set -e
-                    test -f health-check.sh
-                    bash -n health-check.sh
-                    echo "Script syntax OK"
+                    mkdir -p /var/lib/jenkins/bootcamp-labs/dev
+                    cp health-check.sh /var/lib/jenkins/bootcamp-labs/dev/
+                    echo "Development deployment completed"
                 '''
             }
         }
 
-        stage('Test Scripts') {
+        stage('Deploy to Staging') {
+            when {
+                branch 'ec2-staging'
+            }
             steps {
-                echo 'Testing bootcamp scripts...'
                 sh '''
                     set -e
-                    bash health-check.sh
+                    mkdir -p /var/lib/jenkins/bootcamp-labs/staging
+                    cp health-check.sh /var/lib/jenkins/bootcamp-labs/staging/
+                    echo "Staging deployment completed"
                 '''
             }
         }
 
-        stage('Deploy Scripts') {
+        stage('Deploy to Production') {
+            when {
+                branch 'main'
+            }
             steps {
-                echo 'Deploying scripts on EC2'
+                input message: 'Deploy to Production?', ok: 'Deploy'
                 sh '''
                     set -e
-                    mkdir -p /var/lib/jenkins/bootcamp-labs/scripts
-                    cp health-check.sh /var/lib/jenkins/bootcamp-labs/scripts/
-                    chmod +x /var/lib/jenkins/bootcamp-labs/scripts/health-check.sh
-                    echo "Deployment completed successfully"
+                    mkdir -p /var/lib/jenkins/bootcamp-labs/prod
+                    cp health-check.sh /var/lib/jenkins/bootcamp-labs/prod/
+                    echo "Production deployment completed"
                 '''
             }
         }
@@ -58,13 +94,12 @@ pipeline {
     post {
         always {
             archiveArtifacts artifacts: 'health-check.sh'
-            echo 'Bootcamp Pipeline completed'
         }
         success {
-            echo 'Bootcamp Pipeline succeeded!'
+            echo 'Pipeline succeeded!'
         }
         failure {
-            echo 'Bootcamp Pipeline failed!'
+            echo 'Pipeline failed!'
         }
     }
 }
